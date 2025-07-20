@@ -1,0 +1,73 @@
+# Update system
+sudo apt update && sudo apt install -y \
+  build-essential cmake libboost-all-dev libbz2-dev zlib1g-dev \
+  liblzma-dev python3-dev libtool git automake pkg-config wget curl \
+  libgoogle-perftools-dev libeigen3-dev libtcmalloc-minimal4 \
+  gawk zip unzip parallel
+
+# Clone Moses
+cd ~
+git clone https://github.com/moses-smt/mosesdecoder.git
+cd mosesdecoder
+
+# Build Moses
+./bjam -j4 --with-boost=system
+
+# Build GIZA++ and other tools
+cd tools
+make -j4
+
+# Install KenLM (for language modeling)
+cd ~
+git clone https://github.com/kpu/kenlm.git
+cd kenlm
+mkdir build && cd build
+cmake ..
+make -j4
+
+
+
+# Create PBSMT working directory
+mkdir -p ~/pbsmt
+cd ~/pbsmt
+
+# Extract and clean parallel data
+cut -d',' -f1 ../karan.csv | head -n 10000 > corpus.as
+cut -d',' -f2 ../karan.csv | head -n 10000 > corpus.en
+
+# Train KenLM language model (on English corpus)
+~/kenlm/build/bin/lmplz -o 3 < corpus.en > lm.arpa
+~/kenlm/build/bin/build_binary lm.arpa lm.blm
+
+# Start training
+~/mosesdecoder/scripts/training/train-model.perl \
+ -root-dir working \
+ -corpus corpus \
+ -f as -e en \
+ -alignment grow-diag-final-and \
+ -reordering msd-bidirectional-fe \
+ -lm 0:3:$HOME/pbsmt/lm.blm:binary \
+ -external-bin-dir $HOME/mosesdecoder/tools
+ 
+#Prepare the Test Set
+# Extract 5000 lines for test
+cut -d',' -f1 ../karan.csv | head -n 5000 > test.in
+cut -d',' -f2 ../karan.csv | head -n 5000 > test.ref
+
+#Translate
+~/mosesdecoder/bin/moses -f working/model/moses.ini < test.in > test.out
+
+#Evaluate BLEU Score
+perl ~/mosesdecoder/scripts/generic/multi-bleu.perl test.ref < test.out
+
+# BLEU Score
+BLEU = 22.22, 40.4/25.8/15.3/9.7 (BP=0.94, ratio=0.91, hyp_len=4550, ref_len=5000)
+
+
+
+
+
+
+
+
+
